@@ -22,12 +22,12 @@ export class TrpcRouter {
     list: this.trpcService.protectedProcedure
       .input(
         z.object({
-          limit: z.number().min(1).max(100).nullish(),
+          limit: z.number().min(1).max(500).nullish(),
           cursor: z.string().nullish(),
         }),
       )
       .query(async ({ input }) => {
-        const limit = input.limit ?? 50;
+        const limit = input.limit ?? 500;
         const { cursor } = input;
 
         const items = await this.prismaService.account.findMany({
@@ -98,6 +98,7 @@ export class TrpcRouter {
           update: data,
           create: input,
         });
+        this.trpcService.removeBlockedAccount(id);
 
         return account;
       }),
@@ -118,12 +119,15 @@ export class TrpcRouter {
           where: { id },
           data,
         });
+        this.trpcService.removeBlockedAccount(id);
         return account;
       }),
     delete: this.trpcService.protectedProcedure
       .input(z.string())
       .mutation(async ({ input: id }) => {
         await this.prismaService.account.delete({ where: { id } });
+        this.trpcService.removeBlockedAccount(id);
+
         return id;
       }),
   });
@@ -132,12 +136,12 @@ export class TrpcRouter {
     list: this.trpcService.protectedProcedure
       .input(
         z.object({
-          limit: z.number().min(1).max(100).nullish(),
+          limit: z.number().min(1).max(500).nullish(),
           cursor: z.string().nullish(),
         }),
       )
       .query(async ({ input }) => {
-        const limit = input.limit ?? 50;
+        const limit = input.limit ?? 500;
         const { cursor } = input;
 
         const items = await this.prismaService.feed.findMany({
@@ -237,23 +241,37 @@ export class TrpcRouter {
       }),
 
     refreshArticles: this.trpcService.protectedProcedure
-      .input(z.string())
-      .mutation(async ({ input: mpId }) => {
-        await this.trpcService.refreshMpArticlesAndUpdateFeed(mpId);
+      .input(
+        z.object({
+          mpId: z.string().optional(),
+        }),
+      )
+      .mutation(async ({ input: { mpId } }) => {
+        if (mpId) {
+          await this.trpcService.refreshMpArticlesAndUpdateFeed(mpId);
+        } else {
+          await this.trpcService.refreshAllMpArticlesAndUpdateFeed();
+        }
       }),
+
+    isRefreshAllMpArticlesRunning: this.trpcService.protectedProcedure.query(
+      async () => {
+        return this.trpcService.isRefreshAllMpArticlesRunning;
+      },
+    ),
   });
 
   articleRouter = this.trpcService.router({
     list: this.trpcService.protectedProcedure
       .input(
         z.object({
-          limit: z.number().min(1).max(100).nullish(),
+          limit: z.number().min(1).max(500).nullish(),
           cursor: z.string().nullish(),
           mpId: z.string().nullish(),
         }),
       )
       .query(async ({ input }) => {
-        const limit = input.limit ?? 50;
+        const limit = input.limit ?? 500;
         const { cursor, mpId } = input;
 
         const items = await this.prismaService.article.findMany({
@@ -401,7 +419,7 @@ export class TrpcRouter {
           const authCode =
             this.configService.get<ConfigurationType['auth']>('auth')!.code;
 
-          if (req.headers.authorization !== authCode) {
+          if (authCode && req.headers.authorization !== authCode) {
             return {
               errorMsg: 'authCode不正确！',
             };

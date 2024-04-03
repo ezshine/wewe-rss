@@ -58,34 +58,43 @@ export class TrpcService {
             data: { status: statusMap.INVALID },
           });
           this.logger.error(`账号（${id}）登录失效，已禁用`);
-        } else {
-          if (errMsg.includes('WeReadError400')) {
-            // TODO 处理请求参数出错，可能是账号被限制导致的
-            this.logger.error(
-              `账号（${id}）处理请求参数出错，可能是账号被限制导致的，打入小黑屋`,
-            );
-            this.logger.error('WeReadError400: ', errMsg);
-          } else if (errMsg.includes('WeReadError429')) {
-            //TODO 处理请求频繁
-            this.logger.error(`账号（${id}）请求频繁，打入小黑屋`);
-          }
+        } else if (errMsg.includes('WeReadError429')) {
+          //TODO 处理请求频繁
+          this.logger.error(`账号（${id}）请求频繁，打入小黑屋`);
+        }
 
-          const today = this.getTodayDate();
+        const today = this.getTodayDate();
 
-          const blockedAccounts = blockedAccountsMap.get(today);
+        const blockedAccounts = blockedAccountsMap.get(today);
 
-          if (Array.isArray(blockedAccounts)) {
+        if (Array.isArray(blockedAccounts)) {
+          if (id) {
             blockedAccounts.push(id);
-            blockedAccountsMap.set(today, blockedAccounts);
-          } else {
-            blockedAccountsMap.set(today, [id]);
           }
+          blockedAccountsMap.set(today, blockedAccounts);
+        } else if (errMsg.includes('WeReadError400')) {
+          this.logger.error(`账号（${id}）处理请求参数出错`);
+          this.logger.error('WeReadError400: ', errMsg);
+          // 10s 后重试
+          await new Promise((resolve) => setTimeout(resolve, 10 * 1e3));
+        } else {
+          this.logger.error("Can't handle this error: ", errMsg);
         }
 
         return Promise.reject(error);
       },
     );
   }
+
+  removeBlockedAccount = (vid: string) => {
+    const today = this.getTodayDate();
+
+    const blockedAccounts = blockedAccountsMap.get(today);
+    if (Array.isArray(blockedAccounts)) {
+      const newBlockedAccounts = blockedAccounts.filter((id) => id !== vid);
+      blockedAccountsMap.set(today, newBlockedAccounts);
+    }
+  };
 
   private getTodayDate() {
     return dayjs.tz(new Date(), 'Asia/Shanghai').format('YYYY-MM-DD');
@@ -116,28 +125,38 @@ export class TrpcService {
     return account;
   }
 
-  async getMpArticles(mpId: string) {
+  async getMpArticles(mpId: string, retryCount = 3) {
     const account = await this.getAvailableAccount();
 
-    return this.request
-      .get<
-        {
-          id: string;
-          title: string;
-          picUrl: string;
-          publishTime: number;
-        }[]
-      >(`/api/platform/mps/${mpId}/articles`, {
-        headers: {
-          xid: account.id,
-          Authorization: `Bearer ${account.token}`,
-        },
-      })
-      .then((res) => res.data)
-      .then((res) => {
-        this.logger.log(`getMpArticles(${mpId}): ${res.length} articles`);
-        return res;
-      });
+    try {
+      const res = await this.request
+        .get<
+          {
+            id: string;
+            title: string;
+            picUrl: string;
+            publishTime: number;
+          }[]
+        >(`/api/v2/platform/mps/${mpId}/articles`, {
+          headers: {
+            xid: account.id,
+            Authorization: `Bearer ${account.token}`,
+          },
+        })
+        .then((res) => res.data)
+        .then((res) => {
+          this.logger.log(`getMpArticles(${mpId}): ${res.length} articles`);
+          return res;
+        });
+      return res;
+    } catch (err) {
+      this.logger.error(`retry(${4 - retryCount}) getMpArticles  error: `, err);
+      if (retryCount > 0) {
+        return this.getMpArticles(mpId, retryCount - 1);
+      } else {
+        throw err;
+      }
+    }
   }
 
   async refreshMpArticlesAndUpdateFeed(mpId: string) {
@@ -184,7 +203,27 @@ export class TrpcService {
     });
   }
 
+  isRefreshAllMpArticlesRunning = false;
+
+  async refreshAllMpArticlesAndUpdateFeed() {
+    if (this.isRefreshAllMpArticlesRunning) {
+      this.logger.log('refreshAllMpArticlesAndUpdateFeed is running');
+      return;
+    }
+    const mps = await this.prismaService.feed.findMany();
+    this.isRefreshAllMpArticlesRunning = true;
+    try {
+      for (const { id } of mps) {
+        await this.refreshMpArticlesAndUpdateFeed(id);
+        await new Promise((resolve) => setTimeout(resolve, 10 * 1e3));
+      }
+    } finally {
+      this.isRefreshAllMpArticlesRunning = false;
+    }
+  }
+
   async getMpInfo(url: string) {
+    url = url.trim();
     const account = await this.getAvailableAccount();
 
     return this.request
@@ -197,7 +236,7 @@ export class TrpcService {
           updateTime: number;
         }[]
       >(
-        `/api/platform/wxs2mp`,
+        `/api/v2/platform/wxs2mp`,
         { url },
         {
           headers: {
@@ -211,21 +250,21 @@ export class TrpcService {
 
   async createLoginUrl() {
     return this.request
-      .post<{
+      .get<{
         uuid: string;
         scanUrl: string;
-      }>(`/api/login/platform`)
+      }>(`/api/v2/login/platform`)
       .then((res) => res.data);
   }
 
   async getLoginResult(id: string) {
     return this.request
       .get<{
-        message: 'waiting' | 'success';
+        message: string;
         vid?: number;
         token?: string;
         username?: string;
-      }>(`/api/login/platform/${id}`)
+      }>(`/api/v2/login/platform/${id}`, { timeout: 120 * 1e3 })
       .then((res) => res.data);
   }
 }

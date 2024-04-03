@@ -34,6 +34,7 @@ export class FeedsService {
         limit: 3,
         methods: ['GET'],
       },
+      timeout: 8 * 1e3,
       headers: {
         accept:
           'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
@@ -52,6 +53,16 @@ export class FeedsService {
         'user-agent':
           'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36',
       },
+      hooks: {
+        beforeRetry: [
+          async (options, error, retryCount) => {
+            this.logger.warn(`retrying ${options.url}...`);
+            return new Promise((resolve) =>
+              setTimeout(resolve, 2e3 * (retryCount || 1)),
+            );
+          },
+        ],
+      },
     });
   }
 
@@ -69,9 +80,14 @@ export class FeedsService {
 
     for (const feed of feeds) {
       this.logger.debug('feed', feed.id);
-      await this.trpcService.refreshMpArticlesAndUpdateFeed(feed.id);
-      // wait 30s for next feed
-      await new Promise((resolve) => setTimeout(resolve, 90 * 1e3));
+      try {
+        await this.trpcService.refreshMpArticlesAndUpdateFeed(feed.id);
+      } catch (err) {
+        this.logger.error('handleUpdateFeedsCron error', err);
+      } finally {
+        // wait 30s for next feed
+        await new Promise((resolve) => setTimeout(resolve, 30 * 1e3));
+      }
     }
   }
 
@@ -110,8 +126,9 @@ export class FeedsService {
     }
     const url = `https://mp.weixin.qq.com/s/${id}`;
     content = await this.getHtmlByUrl(url).catch((e) => {
-      this.logger.error('getHtmlByUrl error:', e);
-      return '';
+      this.logger.error(`getHtmlByUrl(${url}) error: ${e.message}`);
+
+      return '获取全文失败，请重试~';
     });
     mpCache.set(id, content);
     return content;
@@ -144,11 +161,16 @@ export class FeedsService {
       copyright: '',
       updated: new Date(feedInfo.updateTime * 1e3),
       generator: 'WeWe-RSS',
+      author: { name: feedInfo.mpName },
     });
 
     feed.addExtension({
       name: 'generator',
       objects: `WeWe-RSS`,
+    });
+
+    const feeds = await this.prismaService.feed.findMany({
+      select: { id: true, mpName: true },
     });
 
     /**mode 高于 globalMode。如果 mode 值存在，取 mode 值*/
@@ -157,10 +179,13 @@ export class FeedsService {
         ? mode === 'fulltext'
         : globalMode === 'fulltext';
 
+    const showAuthor = feedInfo.id === 'all';
+
     const mapper = async (item) => {
-      const { title, id, publishTime, picUrl } = item;
+      const { title, id, publishTime, picUrl, mpId } = item;
       const link = `https://mp.weixin.qq.com/s/${id}`;
 
+      const mpName = feeds.find((item) => item.id === mpId)?.mpName || '-';
       const published = new Date(publishTime * 1e3);
 
       let description = '';
@@ -176,6 +201,7 @@ export class FeedsService {
         description,
         date: published,
         image: picUrl,
+        author: showAuthor ? [{ name: mpName }] : undefined,
       });
     };
 
@@ -223,8 +249,8 @@ export class FeedsService {
 
       feedInfo = {
         id: 'all',
-        mpName: 'WeWe-RSS 全部文章',
-        mpIntro: 'WeWe-RSS',
+        mpName: 'WeWe-RSS All',
+        mpIntro: 'WeWe-RSS 全部文章',
         mpCover: 'https://r2-assets.111965.xyz/wewe-rss.png',
         status: 1,
         syncTime: 0,

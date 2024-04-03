@@ -1,7 +1,7 @@
 <div align="center">
 <img src="https://raw.githubusercontent.com/cooderl/wewe-rss/main/assets/logo.png" width="80" alt="预览"/>
 
-<h1 align="center">WeWe RSS</h1>
+<h1 align="center"><a href="https://github.com/cooderl/wewe-rss">WeWe RSS</a></h1>
 
 更优雅的微信公众号订阅方式。
 
@@ -11,10 +11,12 @@
 
 ## 功能
 
+- [x]  v2.x版本使用全新接口，更加稳定
 - [x]  支持微信公众号订阅（基于微信读书）
 - [x]  后台自动定时更新内容
 - [x]  微信公众号RSS生成（支持`.atom`\.`rss`\.`json`格式)
 - [x]  支持全文内容输出，让阅读无障碍
+- [x]  所有订阅源导出OPML
 
 ## 部署
 
@@ -26,7 +28,7 @@
 
 [Railway](https://railway.app/)
 
-[HuggingFace部署参考](https://github.com/cooderl/wewe-rss/issues/32)
+[Hugging Face部署参考](https://github.com/cooderl/wewe-rss/issues/32)
 
 ### Docker Compose 部署
 
@@ -88,11 +90,11 @@ docker run -d \
 
 ## 环境变量
 
-- `AUTH_CODE` （**必填项**）服务端接口请求授权码，(`/feeds`路径不需要)。
-
 - `DATABASE_URL` （**必填项**）数据库地址，例如 `mysql://root:123456@127.0.0.1:3306/wewe-rss`。
 
 - `DATABASE_TYPE` 数据库类型，使用 `sqlite` 时需要填写 `sqlite`。
+
+- `AUTH_CODE` 服务端接口请求授权码，(`/feeds`路径不需要)。
 
 - `SERVER_ORIGIN_URL` 服务端访问地址，用于生成RSS的完整路径（外网访问时，设置为服务器的公网 IP 或者域名地址）。
 
@@ -112,6 +114,18 @@ docker run -d \
   **（添加频率过高容易被封控，等24小时解封）**
 <img width="400" src="./assets/preview3.png"/>
 
+
+## 账号状态说明
+
+- 今日小黑屋 
+  > 账号被封控，等一天恢复
+  > 如果账号正常，可以通过重启服务/容器清除小黑屋记录
+
+- 禁用
+  > 不使用该账号
+
+- 失效
+  > 账号登录状态失效，需要重新登录
 
 ## 本地开发
 

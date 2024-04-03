@@ -30,9 +30,7 @@ const Feeds = () => {
 
   const { isOpen, onOpen, onOpenChange, onClose } = useDisclosure();
   const { refetch: refetchFeedList, data: feedData } = trpc.feed.list.useQuery(
-    {
-      limit: 100,
-    },
+    {},
     {
       refetchOnWindowFocus: true,
     },
@@ -50,6 +48,9 @@ const Feeds = () => {
     trpc.feed.add.useMutation({});
   const { mutateAsync: refreshMpArticles, isLoading: isGetArticlesLoading } =
     trpc.feed.refreshArticles.useMutation();
+
+  const { data: isRefreshAllMpArticlesRunning } =
+    trpc.feed.isRefreshAllMpArticlesRunning.useQuery();
 
   const { mutateAsync: deleteFeed, isLoading: isDeleteFeedLoading } =
     trpc.feed.delete.useMutation({});
@@ -71,7 +72,7 @@ const Feeds = () => {
         updateTime: item.updateTime,
         status: 1,
       });
-      await refreshMpArticles(item.id);
+      await refreshMpArticles({ mpId: item.id });
 
       toast.success('添加成功', {
         description: `公众号 ${item.name}`,
@@ -92,6 +93,38 @@ const Feeds = () => {
   const currentMpInfo = useMemo(() => {
     return feedData?.items.find((item) => item.id === currentMpId);
   }, [currentMpId, feedData?.items]);
+
+  const handleExportOpml = async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (!feedData?.items?.length) {
+      console.warn('没有订阅源');
+      return;
+    }
+
+    let opmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+    <opml version="2.0">
+      <head>
+        <title>WeWeRSS 所有订阅源</title>
+      </head>
+      <body>
+    `;
+
+    feedData?.items.forEach((sub) => {
+      opmlContent += `    <outline text="${sub.mpName}" type="rss" xmlUrl="${window.location.origin}/feeds/${sub.id}.atom" htmlUrl="${window.location.origin}/feeds/${sub.id}.atom"/>\n`;
+    });
+
+    opmlContent += `    </body>
+    </opml>`;
+
+    const blob = new Blob([opmlContent], { type: 'text/xml;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'WeWeRSS-All.opml';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
     <>
@@ -164,7 +197,7 @@ const Feeds = () => {
                 </div>
                 <Divider orientation="vertical" />
                 <Tooltip
-                  content="频繁调用会导致一段时间内不可用！"
+                  content="频繁调用可能会导致一段时间内不可用"
                   color="danger"
                 >
                   <Link
@@ -174,7 +207,7 @@ const Feeds = () => {
                     onClick={async (ev) => {
                       ev.preventDefault();
                       ev.stopPropagation();
-                      await refreshMpArticles(currentMpInfo.id);
+                      await refreshMpArticles({ mpId: currentMpInfo.id });
                       await refetchFeedList();
                       await queryUtils.article.list.reset();
                     }}
@@ -230,7 +263,7 @@ const Feeds = () => {
                     size="sm"
                     showAnchorIcon
                     target="_blank"
-                    href={`${serverOriginUrl}/feeds/${currentMpInfo.id}`}
+                    href={`${serverOriginUrl}/feeds/${currentMpInfo.id}.atom`}
                     color="foreground"
                   >
                     RSS
@@ -238,15 +271,49 @@ const Feeds = () => {
                 </Tooltip>
               </div>
             ) : (
-              <Link
-                size="sm"
-                showAnchorIcon
-                target="_blank"
-                href={`${serverOriginUrl}/feeds/all.atom`}
-                color="foreground"
-              >
-                RSS
-              </Link>
+              <div className="flex gap-2">
+                <Tooltip
+                  content="频繁调用可能会导致一段时间内不可用"
+                  color="danger"
+                >
+                  <Link
+                    size="sm"
+                    href="#"
+                    isDisabled={
+                      isRefreshAllMpArticlesRunning || isGetArticlesLoading
+                    }
+                    onClick={async (ev) => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      await refreshMpArticles({});
+                      await refetchFeedList();
+                      await queryUtils.article.list.reset();
+                    }}
+                  >
+                    {isRefreshAllMpArticlesRunning || isGetArticlesLoading
+                      ? '更新中...'
+                      : '更新全部'}
+                  </Link>
+                </Tooltip>
+                <Link
+                  href="#"
+                  color="foreground"
+                  onClick={handleExportOpml}
+                  size="sm"
+                >
+                  导出OPML
+                </Link>
+                <Divider orientation="vertical" />
+                <Link
+                  size="sm"
+                  showAnchorIcon
+                  target="_blank"
+                  href={`${serverOriginUrl}/feeds/all.atom`}
+                  color="foreground"
+                >
+                  RSS
+                </Link>
+              </div>
             )}
           </div>
           <div className="p-2 overflow-y-auto">
